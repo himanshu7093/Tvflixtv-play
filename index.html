@@ -271,9 +271,7 @@
   </div>
 
   <script>
-    // PASTE YOUR CLOUDFLARE WORKER URL BELOW (no trailing slash)
     const PROXY_URL = "https://tvflix-proxy.nrj7233.workers.dev";
-
     const PLAYLIST_URL = "https://raw.githubusercontent.com/himanshu7093/Tvflixtv-play/main/playlist.m3u";
     const FALLBACK_URL = "./playlist.m3u";
 
@@ -323,8 +321,7 @@
     }
 
     function wrapWithProxy(uri) {
-      if (!PROXY_URL || PROXY_URL === "https://tvflix-proxy.nrj7233.workers.dev") return uri;
-      if (uri.startsWith(PROXY_URL)) return uri;
+      if (!PROXY_URL || uri.startsWith(PROXY_URL)) return uri;
       let target = uri;
       if (currentCookie && !target.includes("__hdnea__=")) {
         target += (target.includes("?") ? "&" : "?") + currentCookie;
@@ -340,8 +337,10 @@
       }
       shakaPlayer = new shaka.Player(video);
 
-      // Route manifest & segment requests through your CORS proxy with Cookie & User-Agent
-      shakaPlayer.getNetworkingEngine().registerRequestFilter((type, request) => {
+      const net = shakaPlayer.getNetworkingEngine();
+
+      // 1. Route manifest & segment requests through Cloudflare Worker
+      net.registerRequestFilter((type, request) => {
         const isMedia =
           type === shaka.net.NetworkingEngine.RequestType.MANIFEST ||
           type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
@@ -351,10 +350,21 @@
         }
       });
 
+      // 2. Restore original CDN URI on response so Shaka resolves relative chunks properly
+      net.registerResponseFilter((type, response) => {
+        if (response.uri && response.uri.startsWith(PROXY_URL)) {
+          try {
+            const parsed = new URL(response.uri);
+            const original = parsed.searchParams.get("url");
+            if (original) response.uri = original;
+          } catch {}
+        }
+      });
+
       shakaPlayer.addEventListener("error", (e) => {
         console.error("Shaka Error:", e.detail);
         const code = e.detail ? e.detail.code : "";
-        showToast(`Stream error (${code}). Refreshing token or try another channel.`, 4000);
+        showToast(`Stream error (Code ${code}). Try refreshing playlist or another channel.`, 4000);
       });
     }
 
