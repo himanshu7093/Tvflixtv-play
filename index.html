@@ -272,7 +272,6 @@
   </div>
 
   <script>
-    const PROXY_URL = "https://tvflix-proxy.nrj7233.workers.dev";
     const PLAYLIST_URL = "https://raw.githubusercontent.com/himanshu7093/Tvflixtv-play/main/playlist.m3u";
     const FALLBACK_URL = "./playlist.m3u";
 
@@ -293,8 +292,7 @@
     let favorites = JSON.parse(localStorage.getItem("tvflix_favs") || "[]");
     let showOnlyFavs = false;
     let activeChannelUrl = null;
-    let currentCookie = "";
-    let useProxyForCurrent = false;
+    let currentToken = "";
 
     const RATIOS = [
       { cls: "ratio-fit", label: "📐 Fit" },
@@ -316,25 +314,10 @@
       showToast("M3U URL copied! Paste in OTT Navigator / TiviMate.");
     }
 
-    function extractCookie(ch) {
+    function extractToken(ch) {
       if (ch.cookie && ch.cookie.includes("__hdnea__=")) return ch.cookie.trim();
       const match = ch.url.match(/(__hdnea__=[^&]+)/);
       return match ? match[1] : "";
-    }
-
-    function isJioDirectHost(url) {
-      return url.includes("cdn.jio.com") || url.includes("jiotv");
-    }
-
-    function appendToken(uri) {
-      if (!currentCookie || uri.includes("__hdnea__=")) return uri;
-      return uri + (uri.includes("?") ? "&" : "?") + currentCookie;
-    }
-
-    function wrapWithProxy(uri) {
-      if (!PROXY_URL || uri.startsWith(PROXY_URL)) return uri;
-      const target = appendToken(uri);
-      return `${PROXY_URL}/?url=${encodeURIComponent(target)}&cookie=${encodeURIComponent(currentCookie)}`;
     }
 
     async function initShaka() {
@@ -347,30 +330,18 @@
       shakaPlayer = new shaka.Player();
       await shakaPlayer.attach(video);
 
-      const net = shakaPlayer.getNetworkingEngine();
-
-      net.registerRequestFilter((type, request) => {
+      // Direct playback: attach __hdnea__ token to every manifest & segment request
+      shakaPlayer.getNetworkingEngine().registerRequestFilter((type, request) => {
+        if (!currentToken) return;
         const isMedia =
           type === shaka.net.NetworkingEngine.RequestType.MANIFEST ||
           type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
 
-        if (!isMedia || !request.uris || !request.uris.length) return;
-
-        if (useProxyForCurrent) {
-          request.uris = request.uris.map((uri) => wrapWithProxy(uri));
-        } else {
-          // Direct Indian-IP playback (avoids Cloudflare 451) + forward __hdnea__ token to every segment
-          request.uris = request.uris.map((uri) => appendToken(uri));
-        }
-      });
-
-      net.registerResponseFilter((type, response) => {
-        if (response.uri && response.uri.startsWith(PROXY_URL)) {
-          try {
-            const parsed = new URL(response.uri);
-            const original = parsed.searchParams.get("url");
-            if (original) response.uri = original;
-          } catch {}
+        if (isMedia && request.uris && request.uris.length > 0) {
+          request.uris = request.uris.map((uri) => {
+            if (uri.includes("__hdnea__=")) return uri;
+            return uri + (uri.includes("?") ? "&" : "?") + currentToken;
+          });
         }
       });
 
@@ -486,10 +457,7 @@
 
     async function playChannel(ch, el) {
       activeChannelUrl = ch.url;
-      currentCookie = extractCookie(ch);
-
-      // Direct for JioTV (avoids Cloudflare 451); Cloudflare proxy for other channels
-      useProxyForCurrent = !isJioDirectHost(ch.url);
+      currentToken = extractToken(ch);
 
       document.querySelectorAll(".channel-item").forEach(i => i.classList.remove("active"));
       if (el) el.classList.add("active");
@@ -521,19 +489,8 @@
         populateTracks();
         showToast("Playing: " + ch.name, 2000);
       } catch (err) {
-        // Fallback: if direct failed on a non-Jio stream, retry via Cloudflare Worker
-        if (!useProxyForCurrent && !isJioDirectHost(ch.url)) {
-          useProxyForCurrent = true;
-          try {
-            await shakaPlayer.load(ch.url);
-            video.play().catch(() => {});
-            populateTracks();
-            showToast("Playing via Proxy: " + ch.name, 2000);
-            return;
-          } catch {}
-        }
         console.error(err);
-        showToast(`Blocked by Jio UA/403 (Code ${err.code || '403'}). Enable ModHeader UA or use IPTV app.`, 5000);
+        showToast(`Cannot play "${ch.name}" (Code ${err.code || 'NET'}).`, 4500);
       }
     }
 
