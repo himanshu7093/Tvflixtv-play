@@ -291,6 +291,7 @@
     let favorites = JSON.parse(localStorage.getItem("tvflix_favs") || "[]");
     let showOnlyFavs = false;
     let activeChannelUrl = null;
+    let currentTokenParam = "";
 
     const RATIOS = [
       { cls: "ratio-fit", label: "📐 Fit" },
@@ -312,6 +313,14 @@
       showToast("M3U URL copied! Paste in OTT Navigator / TiviMate.");
     }
 
+    function extractTokenParam(ch) {
+      if (ch.cookie && ch.cookie.includes("__hdnea__=")) {
+        return ch.cookie.trim();
+      }
+      const match = ch.url.match(/(__hdnea__=[^&]+)/);
+      return match ? match[1] : "";
+    }
+
     async function initShaka() {
       shaka.polyfill.installAll();
       if (!shaka.Player.isBrowserSupported()) {
@@ -319,9 +328,27 @@
         return;
       }
       shakaPlayer = new shaka.Player(video);
+
+      // Attach __hdnea__ token to every manifest & segment request automatically
+      shakaPlayer.getNetworkingEngine().registerRequestFilter((type, request) => {
+        if (!currentTokenParam) return;
+        const isMedia =
+          type === shaka.net.NetworkingEngine.RequestType.MANIFEST ||
+          type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
+
+        if (isMedia && request.uris && request.uris.length > 0) {
+          request.uris = request.uris.map((uri) => {
+            if (uri.includes("__hdnea__=")) return uri;
+            const sep = uri.includes("?") ? "&" : "?";
+            return uri + sep + currentTokenParam;
+          });
+        }
+      });
+
       shakaPlayer.addEventListener("error", (e) => {
         console.error("Shaka Error:", e.detail);
-        showToast("Stream blocked by browser CORS/DRM. Use Copy M3U URL in IPTV app.", 4500);
+        const code = e.detail ? e.detail.code : "";
+        showToast(`Playback error (${code}). Token may be expired or blocked by browser.`, 4500);
       });
     }
 
@@ -432,6 +459,8 @@
 
     async function playChannel(ch, el) {
       activeChannelUrl = ch.url;
+      currentTokenParam = extractTokenParam(ch);
+
       document.querySelectorAll(".channel-item").forEach(i => i.classList.remove("active"));
       if (el) el.classList.add("active");
 
@@ -448,7 +477,16 @@
 
       shakaPlayer.configure({
         drm: drmConfig,
-        abr: { enabled: true }
+        abr: { enabled: true },
+        streaming: {
+          bufferingGoal: 15,
+          rebufferingGoal: 2,
+          retryParameters: {
+            maxAttempts: 4,
+            baseDelay: 500,
+            backoffFactor: 1.5
+          }
+        }
       });
 
       try {
@@ -458,7 +496,7 @@
         showToast("Playing: " + ch.name, 2000);
       } catch (err) {
         console.error(err);
-        showToast("Browser blocked stream (CORS/Token). Copy M3U URL for IPTV app.", 4500);
+        showToast(`Cannot play "${ch.name}" in browser (Error ${err.code || 'CORS'}).`, 4500);
       }
     }
 
@@ -545,8 +583,8 @@
 
     async function loadPlaylist() {
       try {
-        let res = await fetch(PLAYLIST_URL);
-        if (!res.ok) res = await fetch(FALLBACK_URL);
+        let res = await fetch(PLAYLIST_URL + "?t=" + Date.now());
+        if (!res.ok) res = await fetch(FALLBACK_URL + "?t=" + Date.now());
         const text = await res.text();
         channels = parseM3U(text);
         channelCountEl.textContent = `${channels.length} Channels`;
