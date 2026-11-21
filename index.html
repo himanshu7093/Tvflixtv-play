@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta name="referrer" content="no-referrer" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>TVFLIX Live — OTT Player</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.7.11/shaka-player.compiled.js"></script>
@@ -293,6 +294,7 @@
     let showOnlyFavs = false;
     let activeChannelUrl = null;
     let currentCookie = "";
+    let useProxyForCurrent = false;
 
     const RATIOS = [
       { cls: "ratio-fit", label: "📐 Fit" },
@@ -302,7 +304,7 @@
     ];
     let currentRatioIdx = 0;
 
-    function showToast(msg, duration = 3000) {
+    function showToast(msg, duration = 3500) {
       toastEl.textContent = msg;
       toastEl.classList.add("show");
       clearTimeout(toastEl._timer);
@@ -320,12 +322,18 @@
       return match ? match[1] : "";
     }
 
+    function isJioDirectHost(url) {
+      return url.includes("cdn.jio.com") || url.includes("jiotv");
+    }
+
+    function appendToken(uri) {
+      if (!currentCookie || uri.includes("__hdnea__=")) return uri;
+      return uri + (uri.includes("?") ? "&" : "?") + currentCookie;
+    }
+
     function wrapWithProxy(uri) {
       if (!PROXY_URL || uri.startsWith(PROXY_URL)) return uri;
-      let target = uri;
-      if (currentCookie && !target.includes("__hdnea__=")) {
-        target += (target.includes("?") ? "&" : "?") + currentCookie;
-      }
+      const target = appendToken(uri);
       return `${PROXY_URL}/?url=${encodeURIComponent(target)}&cookie=${encodeURIComponent(currentCookie)}`;
     }
 
@@ -335,22 +343,27 @@
         showToast("Browser not supported for Shaka Player.", 5000);
         return;
       }
-      shakaPlayer = new shaka.Player(video);
+
+      shakaPlayer = new shaka.Player();
+      await shakaPlayer.attach(video);
 
       const net = shakaPlayer.getNetworkingEngine();
 
-      // 1. Route manifest & segment requests through Cloudflare Worker
       net.registerRequestFilter((type, request) => {
         const isMedia =
           type === shaka.net.NetworkingEngine.RequestType.MANIFEST ||
           type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
 
-        if (isMedia && request.uris && request.uris.length > 0) {
+        if (!isMedia || !request.uris || !request.uris.length) return;
+
+        if (useProxyForCurrent) {
           request.uris = request.uris.map((uri) => wrapWithProxy(uri));
+        } else {
+          // Direct Indian-IP playback (avoids Cloudflare 451) + forward __hdnea__ token to every segment
+          request.uris = request.uris.map((uri) => appendToken(uri));
         }
       });
 
-      // 2. Restore original CDN URI on response so Shaka resolves relative chunks properly
       net.registerResponseFilter((type, response) => {
         if (response.uri && response.uri.startsWith(PROXY_URL)) {
           try {
@@ -363,8 +376,6 @@
 
       shakaPlayer.addEventListener("error", (e) => {
         console.error("Shaka Error:", e.detail);
-        const code = e.detail ? e.detail.code : "";
-        showToast(`Stream error (Code ${code}). Try refreshing playlist or another channel.`, 4000);
       });
     }
 
@@ -477,6 +488,9 @@
       activeChannelUrl = ch.url;
       currentCookie = extractCookie(ch);
 
+      // Direct for JioTV (avoids Cloudflare 451); Cloudflare proxy for other channels
+      useProxyForCurrent = !isJioDirectHost(ch.url);
+
       document.querySelectorAll(".channel-item").forEach(i => i.classList.remove("active"));
       if (el) el.classList.add("active");
 
@@ -497,7 +511,7 @@
         streaming: {
           bufferingGoal: 15,
           rebufferingGoal: 2,
-          retryParameters: { maxAttempts: 4, baseDelay: 500, backoffFactor: 1.5 }
+          retryParameters: { maxAttempts: 3, baseDelay: 500, backoffFactor: 1.5 }
         }
       });
 
@@ -507,8 +521,19 @@
         populateTracks();
         showToast("Playing: " + ch.name, 2000);
       } catch (err) {
+        // Fallback: if direct failed on a non-Jio stream, retry via Cloudflare Worker
+        if (!useProxyForCurrent && !isJioDirectHost(ch.url)) {
+          useProxyForCurrent = true;
+          try {
+            await shakaPlayer.load(ch.url);
+            video.play().catch(() => {});
+            populateTracks();
+            showToast("Playing via Proxy: " + ch.name, 2000);
+            return;
+          } catch {}
+        }
         console.error(err);
-        showToast(`Failed to load "${ch.name}" (Code ${err.code || 'NET'}).`, 4000);
+        showToast(`Blocked by Jio UA/403 (Code ${err.code || '403'}). Enable ModHeader UA or use IPTV app.`, 5000);
       }
     }
 
