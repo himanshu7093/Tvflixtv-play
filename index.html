@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>TVFLIX Live — OTT Player</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.7.11/shaka-player.compiled.js"></script>
+  <style>
+    :root {
+      --bg-main: #090b10;
+      --bg-panel: #11151f;
+      --bg-card: #181e2c;
+      --bg-hover: #222b3e;
+      --accent: #00a8e8;
+      --danger: #ef4444;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --border: #1f2937;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+    body { background: var(--bg-main); color: var(--text-main); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+    header {
+      background: rgba(17, 21, 31, 0.95);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      z-index: 20;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .brand-logo {
+      background: linear-gradient(135deg, #00a8e8, #2563eb);
+      color: #fff;
+      font-weight: 800;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 0.95rem;
+      letter-spacing: 0.5px;
+    }
+    .badge {
+      background: var(--bg-card);
+      color: var(--accent);
+      border: 1px solid var(--border);
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .header-actions { display: flex; align-items: center; gap: 8px; }
+    .btn {
+      background: var(--bg-card);
+      color: var(--text-main);
+      border: 1px solid var(--border);
+      padding: 7px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.82rem;
+      font-weight: 500;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn:hover { background: var(--bg-hover); border-color: var(--accent); }
+    .btn-primary { background: var(--accent); color: #04101a; border: none; font-weight: 700; }
+    .btn-primary:hover { background: #38bdf8; }
+
+    .layout { display: flex; flex: 1; overflow: hidden; }
+
+    .sidebar {
+      width: 340px;
+      background: var(--bg-panel);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+    .filters { padding: 12px; display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid var(--border); }
+    .search-box, .select-box {
+      width: 100%;
+      background: var(--bg-main);
+      color: var(--text-main);
+      border: 1px solid var(--border);
+      padding: 9px 12px;
+      border-radius: 8px;
+      font-size: 0.88rem;
+      outline: none;
+    }
+    .search-box:focus, .select-box:focus { border-color: var(--accent); }
+    .filter-row { display: flex; gap: 8px; }
+    .fav-toggle { white-space: nowrap; }
+    .fav-toggle.active { background: #eab308; color: #000; border-color: #eab308; font-weight: 700; }
+
+    #channelList { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+    #channelList::-webkit-scrollbar { width: 6px; }
+    #channelList::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+
+    .channel-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s;
+      border: 1px solid transparent;
+    }
+    .channel-item:hover { background: var(--bg-hover); }
+    .channel-item.active { background: rgba(0, 168, 232, 0.14); border-color: var(--accent); }
+    .channel-logo {
+      width: 40px;
+      height: 40px;
+      border-radius: 6px;
+      background: #0b0f17;
+      object-fit: contain;
+      padding: 2px;
+      flex-shrink: 0;
+    }
+    .channel-meta { flex: 1; min-width: 0; }
+    .channel-title { font-size: 0.88rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .channel-sub { font-size: 0.72rem; color: var(--text-muted); display: flex; gap: 6px; align-items: center; margin-top: 2px; }
+    .drm-tag { background: rgba(239, 68, 68, 0.2); color: #f87171; padding: 1px 5px; border-radius: 4px; font-size: 0.65rem; font-weight: 700; }
+    .star-btn { background: none; border: none; color: #64748b; font-size: 1rem; cursor: pointer; padding: 4px; }
+    .star-btn.starred { color: #facc15; }
+
+    .stage {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: #000;
+      position: relative;
+      overflow: hidden;
+    }
+    .video-wrap {
+      flex: 1;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      background: #000;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      background: #000;
+      transition: transform 0.2s ease;
+    }
+    video.ratio-fit { object-fit: contain; transform: scale(1); }
+    video.ratio-fill { object-fit: cover; transform: scale(1); }
+    video.ratio-stretch { object-fit: fill; transform: scale(1); }
+    video.ratio-zoom { object-fit: cover; transform: scale(1.22); }
+
+    .status-toast {
+      position: absolute;
+      top: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid var(--border);
+      color: #fff;
+      padding: 8px 16px;
+      border-radius: 999px;
+      font-size: 0.82rem;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.25s;
+      z-index: 10;
+      text-align: center;
+      max-width: 90%;
+    }
+    .status-toast.show { opacity: 1; }
+
+    .control-bar {
+      background: linear-gradient(to top, rgba(9, 11, 16, 0.98), rgba(17, 21, 31, 0.92));
+      border-top: 1px solid var(--border);
+      padding: 10px 16px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      z-index: 15;
+    }
+    .now-playing { display: flex; align-items: center; gap: 10px; min-width: 180px; max-width: 320px; }
+    .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); box-shadow: 0 0 8px var(--danger); flex-shrink: 0; }
+    .now-title { font-size: 0.88rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .controls-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .ctrl-select {
+      background: var(--bg-card);
+      color: var(--text-main);
+      border: 1px solid var(--border);
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      outline: none;
+    }
+    .ctrl-select:hover { border-color: var(--accent); }
+
+    @media (max-width: 820px) {
+      .layout { flex-direction: column-reverse; }
+      .sidebar { width: 100%; height: 48%; border-right: none; border-top: 1px solid var(--border); }
+      .stage { height: 52%; }
+      header { padding: 8px 12px; }
+      .now-playing { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <div class="brand-logo">TVFLIX</div>
+      <span class="badge" id="channelCount">Loading...</span>
+    </div>
+    <div class="header-actions">
+      <button class="btn btn-primary" onclick="copyPlaylistUrl()">Copy M3U URL</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="filters">
+        <input type="text" id="searchInput" class="search-box" placeholder="Search 1,100+ channels..." />
+        <div class="filter-row">
+          <select id="groupSelect" class="select-box">
+            <option value="ALL">All Categories</option>
+          </select>
+          <button id="favFilterBtn" class="btn fav-toggle" onclick="toggleFavFilter()">★ Favs</button>
+        </div>
+      </div>
+      <div id="channelList"></div>
+    </aside>
+
+    <main class="stage" id="playerContainer">
+      <div class="video-wrap">
+        <video id="video" class="ratio-fit" autoplay playsinline controls></video>
+        <div id="toast" class="status-toast"></div>
+      </div>
+
+      <div class="control-bar">
+        <div class="now-playing">
+          <span class="live-dot"></span>
+          <span class="now-title" id="nowPlayingTitle">Select a channel</span>
+        </div>
+
+        <div class="controls-group">
+          <button class="btn" id="playPauseBtn" onclick="togglePlay()">⏯ Play/Pause</button>
+          <button class="btn" id="muteBtn" onclick="toggleMute()">🔊 Mute</button>
+
+          <select id="qualitySelect" class="ctrl-select" onchange="changeQuality(this.value)" title="Video Quality">
+            <option value="auto">Quality: Auto</option>
+          </select>
+
+          <select id="audioSelect" class="ctrl-select" onchange="changeAudio(this.value)" title="Audio Track">
+            <option value="">Audio: Default</option>
+          </select>
+
+          <button class="btn" id="ratioBtn" onclick="cycleRatio()" title="Screen Ratio">📐 Fit</button>
+          <button class="btn" onclick="togglePiP()" title="Picture in Picture">⧉ PiP</button>
+          <button class="btn" onclick="toggleFullscreen()" title="Fullscreen">⛶ Fullscreen</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const PLAYLIST_URL = "https://raw.githubusercontent.com/himanshu7093/Tvflixtv-play/main/playlist.m3u";
+    const FALLBACK_URL = "./playlist.m3u";
+
+    const video = document.getElementById("video");
+    const playerContainer = document.getElementById("playerContainer");
+    const channelListEl = document.getElementById("channelList");
+    const searchInput = document.getElementById("searchInput");
+    const groupSelect = document.getElementById("groupSelect");
+    const channelCountEl = document.getElementById("channelCount");
+    const nowPlayingTitle = document.getElementById("nowPlayingTitle");
+    const qualitySelect = document.getElementById("qualitySelect");
+    const audioSelect = document.getElementById("audioSelect");
+    const ratioBtn = document.getElementById("ratioBtn");
+    const toastEl = document.getElementById("toast");
+
+    let shakaPlayer = null;
+    let channels = [];
+    let favorites = JSON.parse(localStorage.getItem("tvflix_favs") || "[]");
+    let showOnlyFavs = false;
+    let activeChannelUrl = null;
+
+    const RATIOS = [
+      { cls: "ratio-fit", label: "📐 Fit" },
+      { cls: "ratio-fill", label: "📐 Fill" },
+      { cls: "ratio-stretch", label: "📐 Stretch" },
+      { cls: "ratio-zoom", label: "📐 Zoom" }
+    ];
+    let currentRatioIdx = 0;
+
+    function showToast(msg, duration = 3000) {
+      toastEl.textContent = msg;
+      toastEl.classList.add("show");
+      clearTimeout(toastEl._timer);
+      toastEl._timer = setTimeout(() => toastEl.classList.remove("show"), duration);
+    }
+
+    function copyPlaylistUrl() {
+      navigator.clipboard.writeText(PLAYLIST_URL);
+      showToast("M3U URL copied! Paste in OTT Navigator / TiviMate.");
+    }
+
+    async function initShaka() {
+      shaka.polyfill.installAll();
+      if (!shaka.Player.isBrowserSupported()) {
+        showToast("Browser not supported for Shaka Player.", 5000);
+        return;
+      }
+      shakaPlayer = new shaka.Player(video);
+      shakaPlayer.addEventListener("error", (e) => {
+        console.error("Shaka Error:", e.detail);
+        showToast("Stream blocked by browser CORS/DRM. Use Copy M3U URL in IPTV app.", 4500);
+      });
+    }
+
+    function parseM3U(text) {
+      const lines = text.split(/\r?\n/);
+      const list = [];
+      let current = null;
+
+      for (let raw of lines) {
+        const line = raw.trim();
+        if (!line) continue;
+
+        if (line.startsWith("#EXTINF:")) {
+          const nameMatch = line.match(/,(.*)$/);
+          const logoMatch = line.match(/tvg-logo="([^"]*)"/);
+          const groupMatch = line.match(/group-title="([^"]*)"/);
+          current = {
+            name: nameMatch ? nameMatch[1].trim() : "Unknown",
+            logo: logoMatch ? logoMatch[1] : "",
+            group: groupMatch ? groupMatch[1] : "General",
+            url: "",
+            drmType: null,
+            drmKey: null,
+            cookie: null
+          };
+        } else if (line.startsWith("#KODIPROP:") && current) {
+          if (line.includes("license_type=")) {
+            current.drmType = line.split("license_type=")[1].trim().toLowerCase();
+          } else if (line.includes("license_key=")) {
+            current.drmKey = line.split("license_key=")[1].trim();
+          }
+        } else if (line.startsWith("#EXTVLCOPT:http-cookie=") && current) {
+          current.cookie = line.split("http-cookie=")[1].trim();
+        } else if ((line.startsWith("http://") || line.startsWith("https://")) && current) {
+          current.url = line;
+          list.push(current);
+          current = null;
+        }
+      }
+      return list;
+    }
+
+    function populateGroups() {
+      const groups = [...new Set(channels.map(c => c.group))].sort();
+      groups.forEach(g => {
+        const opt = document.createElement("option");
+        opt.value = g;
+        opt.textContent = g;
+        groupSelect.appendChild(opt);
+      });
+    }
+
+    function toggleFav(name, e) {
+      e.stopPropagation();
+      if (favorites.includes(name)) {
+        favorites = favorites.filter(f => f !== name);
+      } else {
+        favorites.push(name);
+      }
+      localStorage.setItem("tvflix_favs", JSON.stringify(favorites));
+      renderChannels();
+    }
+
+    function toggleFavFilter() {
+      showOnlyFavs = !showOnlyFavs;
+      document.getElementById("favFilterBtn").classList.toggle("active", showOnlyFavs);
+      renderChannels();
+    }
+
+    function renderChannels() {
+      const q = searchInput.value.toLowerCase();
+      const grp = groupSelect.value;
+
+      const filtered = channels.filter(c =>
+        c.name.toLowerCase().includes(q) &&
+        (grp === "ALL" || c.group === grp) &&
+        (!showOnlyFavs || favorites.includes(c.name))
+      );
+
+      channelListEl.innerHTML = "";
+      if (!filtered.length) {
+        channelListEl.innerHTML = "<p style='padding:16px;color:#94a3b8;text-align:center'>No channels found.</p>";
+        return;
+      }
+
+      const frag = document.createDocumentFragment();
+      filtered.slice(0, 300).forEach(ch => {
+        const isFav = favorites.includes(ch.name);
+        const div = document.createElement("div");
+        div.className = "channel-item" + (ch.url === activeChannelUrl ? " active" : "");
+        div.innerHTML = `
+          <img class="channel-logo" src="${ch.logo || 'https://via.placeholder.com/40?text=TV'}" loading="lazy" onerror="this.src='https://via.placeholder.com/40?text=TV'" />
+          <div class="channel-meta">
+            <div class="channel-title">${ch.name}</div>
+            <div class="channel-sub">
+              <span>${ch.group}</span>
+              ${ch.drmKey ? '<span class="drm-tag">DRM</span>' : ''}
+            </div>
+          </div>
+          <button class="star-btn ${isFav ? 'starred' : ''}" title="Favorite">${isFav ? '★' : '☆'}</button>
+        `;
+        div.querySelector(".star-btn").onclick = (e) => toggleFav(ch.name, e);
+        div.onclick = () => playChannel(ch, div);
+        frag.appendChild(div);
+      });
+      channelListEl.appendChild(frag);
+    }
+
+    async function playChannel(ch, el) {
+      activeChannelUrl = ch.url;
+      document.querySelectorAll(".channel-item").forEach(i => i.classList.remove("active"));
+      if (el) el.classList.add("active");
+
+      nowPlayingTitle.textContent = ch.name;
+      showToast("Loading " + ch.name + "...");
+
+      const drmConfig = { clearKeys: {}, servers: {} };
+      if (ch.drmType && ch.drmType.includes("clearkey") && ch.drmKey && ch.drmKey.includes(":")) {
+        const [kid, key] = ch.drmKey.split(":");
+        drmConfig.clearKeys[kid.trim()] = key.trim();
+      } else if (ch.drmType && ch.drmType.includes("widevine") && ch.drmKey) {
+        drmConfig.servers["com.widevine.alpha"] = ch.drmKey;
+      }
+
+      shakaPlayer.configure({
+        drm: drmConfig,
+        abr: { enabled: true }
+      });
+
+      try {
+        await shakaPlayer.load(ch.url);
+        video.play().catch(() => {});
+        populateTracks();
+        showToast("Playing: " + ch.name, 2000);
+      } catch (err) {
+        console.error(err);
+        showToast("Browser blocked stream (CORS/Token). Copy M3U URL for IPTV app.", 4500);
+      }
+    }
+
+    function populateTracks() {
+      const tracks = shakaPlayer.getVariantTracks();
+      const uniqueHeights = [...new Set(tracks.map(t => t.height).filter(Boolean))].sort((a, b) => b - a);
+      qualitySelect.innerHTML = `<option value="auto">Quality: Auto</option>`;
+      uniqueHeights.forEach(h => {
+        const opt = document.createElement("option");
+        opt.value = h;
+        opt.textContent = `${h}p`;
+        qualitySelect.appendChild(opt);
+      });
+
+      const langs = shakaPlayer.getAudioLanguages();
+      audioSelect.innerHTML = `<option value="">Audio: Default</option>`;
+      langs.forEach(l => {
+        const opt = document.createElement("option");
+        opt.value = l;
+        opt.textContent = `Audio: ${l.toUpperCase()}`;
+        audioSelect.appendChild(opt);
+      });
+    }
+
+    function changeQuality(val) {
+      if (!shakaPlayer) return;
+      if (val === "auto") {
+        shakaPlayer.configure({ abr: { enabled: true } });
+        showToast("Quality: Auto");
+      } else {
+        const height = parseInt(val, 10);
+        const track = shakaPlayer.getVariantTracks().find(t => t.height === height);
+        if (track) {
+          shakaPlayer.configure({ abr: { enabled: false } });
+          shakaPlayer.selectVariantTrack(track, true);
+          showToast(`Quality: ${height}p`);
+        }
+      }
+    }
+
+    function changeAudio(lang) {
+      if (!shakaPlayer || !lang) return;
+      shakaPlayer.selectAudioLanguage(lang);
+      showToast(`Audio: ${lang.toUpperCase()}`);
+    }
+
+    function cycleRatio() {
+      video.classList.remove(RATIOS[currentRatioIdx].cls);
+      currentRatioIdx = (currentRatioIdx + 1) % RATIOS.length;
+      video.classList.add(RATIOS[currentRatioIdx].cls);
+      ratioBtn.textContent = RATIOS[currentRatioIdx].label;
+      showToast("Screen Ratio: " + RATIOS[currentRatioIdx].label.replace("📐 ", ""));
+    }
+
+    function togglePlay() {
+      if (video.paused) video.play();
+      else video.pause();
+    }
+
+    function toggleMute() {
+      video.muted = !video.muted;
+      document.getElementById("muteBtn").textContent = video.muted ? "🔇 Unmute" : "🔊 Mute";
+    }
+
+    async function togglePiP() {
+      try {
+        if (document.pictureInPictureElement) await document.exitPictureInPicture();
+        else await video.requestPictureInPicture();
+      } catch {
+        showToast("PiP not supported on this browser.");
+      }
+    }
+
+    async function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        await playerContainer.requestFullscreen().catch(() => {});
+        if (screen.orientation && screen.orientation.lock) {
+          screen.orientation.lock("landscape").catch(() => {});
+        }
+      } else {
+        await document.exitFullscreen().catch(() => {});
+      }
+    }
+
+    async function loadPlaylist() {
+      try {
+        let res = await fetch(PLAYLIST_URL);
+        if (!res.ok) res = await fetch(FALLBACK_URL);
+        const text = await res.text();
+        channels = parseM3U(text);
+        channelCountEl.textContent = `${channels.length} Channels`;
+        populateGroups();
+        renderChannels();
+      } catch (err) {
+        channelCountEl.textContent = "Load Failed";
+        channelListEl.innerHTML = "<p style='padding:16px;color:#f87171'>Failed to load playlist. Make sure repo is Public.</p>";
+      }
+    }
+
+    searchInput.addEventListener("input", renderChannels);
+    groupSelect.addEventListener("change", renderChannels);
+
+    initShaka().then(loadPlaylist);
+  </script>
+</body>
+</html>
