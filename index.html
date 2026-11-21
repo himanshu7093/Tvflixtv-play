@@ -271,6 +271,9 @@
   </div>
 
   <script>
+    // PASTE YOUR CLOUDFLARE WORKER URL BELOW (no trailing slash)
+    const PROXY_URL = "YOUR_WORKER_URL_HERE";
+
     const PLAYLIST_URL = "https://raw.githubusercontent.com/himanshu7093/Tvflixtv-play/main/playlist.m3u";
     const FALLBACK_URL = "./playlist.m3u";
 
@@ -291,7 +294,7 @@
     let favorites = JSON.parse(localStorage.getItem("tvflix_favs") || "[]");
     let showOnlyFavs = false;
     let activeChannelUrl = null;
-    let currentTokenParam = "";
+    let currentCookie = "";
 
     const RATIOS = [
       { cls: "ratio-fit", label: "📐 Fit" },
@@ -313,12 +316,20 @@
       showToast("M3U URL copied! Paste in OTT Navigator / TiviMate.");
     }
 
-    function extractTokenParam(ch) {
-      if (ch.cookie && ch.cookie.includes("__hdnea__=")) {
-        return ch.cookie.trim();
-      }
+    function extractCookie(ch) {
+      if (ch.cookie && ch.cookie.includes("__hdnea__=")) return ch.cookie.trim();
       const match = ch.url.match(/(__hdnea__=[^&]+)/);
       return match ? match[1] : "";
+    }
+
+    function wrapWithProxy(uri) {
+      if (!PROXY_URL || PROXY_URL === "YOUR_WORKER_URL_HERE") return uri;
+      if (uri.startsWith(PROXY_URL)) return uri;
+      let target = uri;
+      if (currentCookie && !target.includes("__hdnea__=")) {
+        target += (target.includes("?") ? "&" : "?") + currentCookie;
+      }
+      return `${PROXY_URL}/?url=${encodeURIComponent(target)}&cookie=${encodeURIComponent(currentCookie)}`;
     }
 
     async function initShaka() {
@@ -329,26 +340,21 @@
       }
       shakaPlayer = new shaka.Player(video);
 
-      // Attach __hdnea__ token to every manifest & segment request automatically
+      // Route manifest & segment requests through your CORS proxy with Cookie & User-Agent
       shakaPlayer.getNetworkingEngine().registerRequestFilter((type, request) => {
-        if (!currentTokenParam) return;
         const isMedia =
           type === shaka.net.NetworkingEngine.RequestType.MANIFEST ||
           type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
 
         if (isMedia && request.uris && request.uris.length > 0) {
-          request.uris = request.uris.map((uri) => {
-            if (uri.includes("__hdnea__=")) return uri;
-            const sep = uri.includes("?") ? "&" : "?";
-            return uri + sep + currentTokenParam;
-          });
+          request.uris = request.uris.map((uri) => wrapWithProxy(uri));
         }
       });
 
       shakaPlayer.addEventListener("error", (e) => {
         console.error("Shaka Error:", e.detail);
         const code = e.detail ? e.detail.code : "";
-        showToast(`Playback error (${code}). Token may be expired or blocked by browser.`, 4500);
+        showToast(`Stream error (${code}). Refreshing token or try another channel.`, 4000);
       });
     }
 
@@ -459,7 +465,7 @@
 
     async function playChannel(ch, el) {
       activeChannelUrl = ch.url;
-      currentTokenParam = extractTokenParam(ch);
+      currentCookie = extractCookie(ch);
 
       document.querySelectorAll(".channel-item").forEach(i => i.classList.remove("active"));
       if (el) el.classList.add("active");
@@ -481,11 +487,7 @@
         streaming: {
           bufferingGoal: 15,
           rebufferingGoal: 2,
-          retryParameters: {
-            maxAttempts: 4,
-            baseDelay: 500,
-            backoffFactor: 1.5
-          }
+          retryParameters: { maxAttempts: 4, baseDelay: 500, backoffFactor: 1.5 }
         }
       });
 
@@ -496,7 +498,7 @@
         showToast("Playing: " + ch.name, 2000);
       } catch (err) {
         console.error(err);
-        showToast(`Cannot play "${ch.name}" in browser (Error ${err.code || 'CORS'}).`, 4500);
+        showToast(`Failed to load "${ch.name}" (Code ${err.code || 'NET'}).`, 4000);
       }
     }
 
